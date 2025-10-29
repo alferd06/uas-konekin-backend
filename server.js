@@ -23,11 +23,11 @@ app.use(express.json());
 app.use(cors());
 
 const pool = new Pool({
-    user: 'db_admin',
-    host: 'localhost',
-    database: 'university_db',
-    password: 'admin123',
-    port: 5432,
+    user: 'postgres',
+    host: 'ballast.proxy.rlwy.net',
+    database: 'railway',
+    password: 'HGpxsvjvmDpuWqxwHleIuAojuzirycuH',
+    port: 48994,
 });
 
 // --- MIDDLEWARE OTENTIKASI BARU ---
