@@ -7,7 +7,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
 const app = express();
-const port = 3001;
+const port = process.env.PORT || 3001;
 
 // middleware
 app.use(express.json());
@@ -688,7 +688,7 @@ app.post('/api/jobs/:jobId/apply', authMiddleware, async (req, res) => {
   }
 });
 
-app.listen(port, () => {
-    console.log(`Server berjalan di http://localhost:${port}`);
-})
+app.listen(port, '0.0.0.0', () => { 
+  console.log(`Server running on port ${port}`); // More generic message
+});
 
