@@ -1,23 +1,22 @@
 {
-  "name": "uas-konekin-backend", // Anda bisa sesuaikan namanya jika mau
+  "name": "uas-konekin-backend", 
   "version": "1.0.0",
-  "description": "Backend API untuk Portal Karier Inklusif", // Deskripsi opsional
-  "main": "server.js", // Nama file utama Anda
+  "description": "Backend API untuk Portal Karier Inklusif",
+  "main": "server.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node server.js", // Perintah untuk produksi (dijalankan Railway)
-    "dev": "nodemon server.js"  // Perintah untuk development (jika Anda pakai nodemon)
+    "start": "node server.js", 
+    "dev": "nodemon server.js" 
   },
-  "keywords": [], // Opsional
-  "author": "",   // Opsional
-  "license": "ISC", // Opsional
+  "keywords": [], 
+  "author": "", 
+  "license": "ISC",
   "dependencies": {
-    "bcryptjs": "^3.0.2", // <-- Pastikan versi Anda cocok
+    "bcryptjs": "^3.0.2", 
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "jsonwebtoken": "^9.0.2",
     "pg": "^8.16.3"
   }
-  // Jika Anda menginstal nodemon sebagai devDependency, akan ada bagian "devDependencies" juga
 }
