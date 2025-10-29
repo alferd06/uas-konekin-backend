@@ -1,12 +1,16 @@
 require('dotenv').config();
 
 const express = require('express');
+const path = require('path'); // Modul Node.js untuk menangani path file
+const multer = require('multer'); // Impor multer
 const { Pool } = require('pg');
 const cors = require('cors'); 
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const fs = require('fs');
 
 const app = express();
+
 // --- PORT CONFIGURATION ---
 const rawPort = process.env.PORT; // Ambil port mentah (string)
 console.log(`Raw process.env.PORT: ${rawPort} (Type: ${typeof rawPort})`); // Log 1
@@ -26,7 +30,7 @@ const pool = new Pool({
     user: 'postgres',
     host: 'ballast.proxy.rlwy.net',
     database: 'railway',
-    password: 'HGpxsvjvmDpuWqxwHleIuAojuzirycuH',
+    password: 'aHGpxsvjvmDpuWqxwHleIuAojuzirycuH',
     port: 48994,
 });
 
@@ -61,7 +65,109 @@ function authMiddleware(req, res, next) {
   }
 }
 
+const resumeStorage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    // Simpan di folder 'uploads/resumes' relatif terhadap server.js
+    // Pastikan Anda membuat folder 'uploads' dan 'resumes' di proyek backend Anda
+    cb(null, path.join(__dirname, 'uploads', 'resumes'));
+  },
+  filename: function (req, file, cb) {
+    // Buat nama file unik: userId-timestamp-originalname
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const userId = req.user?.id || 'unknown'; // Ambil userId dari token jika ada
+    cb(null, `${userId}-${uniqueSuffix}-${file.originalname}`);
+  }
+});
+
+// Middleware multer untuk HANYA menerima 1 file dengan nama field 'resumeFile'
+const uploadResume = multer({
+   storage: resumeStorage,
+   // Tambahkan limits atau fileFilter di sini jika perlu (misal, hanya PDF max 5MB)
+   // limits: { fileSize: 5 * 1024 * 1024 }, // Contoh limit 5MB
+   // fileFilter: function(req, file, cb){ ... cb(null, true/false) ... }
+}).single('resumeFile'); // 'resumeFile' HARUS sama dengan nama <input type="file"> di frontend
+
+// --- AKHIR Konfigurasi Multer ---
+
+
+
+
 // --- AKHIR MIDDLEWARE ---
+
+// --- MODIFIKASI Rute PUT /api/profile ---
+// Tambahkan 'uploadResume' sebagai middleware KEDUA (setelah authMiddleware)
+app.put('/api/profile', authMiddleware, uploadResume, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const userRole = req.user.role;
+
+    let queryText;
+    let values;
+
+    if (userRole === 'seeker') {
+      // req.body sekarang berisi field teks dari FormData
+      const { bio, skills: skillsString, expected_salary, disability_info } = req.body;
+
+      // req.file berisi info file yang diupload (jika ada) dari multer
+      const resume_filename = req.file ? req.file.filename : null;
+
+      // --- PERUBAHAN DI SINI ---
+      // Ubah string skills (yang dipisah koma) menjadi array JavaScript
+      // Tangani juga jika stringnya kosong atau tidak ada
+      const skillsArray = skillsString ? skillsString.split(',').map(s => s.trim()).filter(s => s) : [];
+      // --------------------------
+
+      // --- Query UPSERT Diupdate ---
+      // Kita HANYA update resume_filename jika file baru diupload
+      // COALESCE(kolom_baru, kolom_lama) akan memakai nilai baru jika tidak null, jika null pakai nilai lama
+      queryText = `
+        INSERT INTO user_profiles (user_id, bio, skills, expected_salary, disability_info, resume_filename)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (user_id)
+        DO UPDATE SET
+          bio = EXCLUDED.bio,
+          skills = EXCLUDED.skills,
+          expected_salary = EXCLUDED.expected_salary,
+          disability_info = EXCLUDED.disability_info,
+          resume_filename = COALESCE($6, user_profiles.resume_filename) -- Update hanya jika $6 (filename baru) tidak NULL
+        RETURNING *;
+      `;
+      // --- PERUBAHAN DI SINI ---
+      // Gunakan 'skillsArray' (array JS) di posisi $3
+      values = [userId, bio, skillsArray, expected_salary, disability_info, resume_filename];
+      // --------------------------
+
+    } else if (userRole === 'recruiter') {
+      // --- Logika untuk Recruiter (TETAP SAMA, tidak ada upload file di sini) ---
+      const { company_name, company_description, company_website } = req.body;
+      queryText = `
+        INSERT INTO company_profiles (recruiter_user_id, company_name, company_description, company_website)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (recruiter_user_id)
+        DO UPDATE SET /* ... update fields ... */
+        RETURNING *;
+      `;
+      values = [userId, company_name, company_description, company_website];
+      // -------------------------------------------------------------------
+    } else {
+      return res.status(403).json({ error: "Admin tidak bisa mengupdate profil." });
+    }
+
+    const result = await pool.query(queryText, values);
+    res.json(result.rows[0]);
+
+  } catch (err) {
+    console.error("Error updating profile:", err.message); // Log error lebih detail
+    // Hapus file yang mungkin terupload jika query DB gagal
+    if (req.file) {
+       const fs = require('fs');
+       fs.unlink(req.file.path, (unlinkErr) => {
+          if (unlinkErr) console.error("Error deleting uploaded file after DB error:", unlinkErr);
+       });
+    }
+    res.status(500).json({ error: "Gagal mengupdate profil" });
+  }
+});
 
 app.get('/api/mahasiswa', async (req, res) => {
     console.log("Fungsi api berjalan");
@@ -262,6 +368,9 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
   }
 });
 
+
+
+
 // --- MODUL PROFIL ---
 
 // 1. RUTE: Mengambil Profil Milik User yang Login
@@ -277,7 +386,7 @@ app.get('/api/profile', authMiddleware, async (req, res) => {
     // Bedakan query berdasarkan role
     if (userRole === 'seeker') {
       queryText = `
-        SELECT u.id, u.full_name, u.email, u.role, p.bio, p.skills, p.resume_url, p.expected_salary, p.disability_info 
+        SELECT u.id, u.full_name, u.email, u.role, p.bio, p.skills, p.resume_filename, p.expected_salary, p.disability_info 
         FROM users u 
         LEFT JOIN user_profiles p ON u.id = p.user_id 
         WHERE u.id = $1
@@ -323,24 +432,24 @@ app.put('/api/profile', authMiddleware, async (req, res) => {
 
     if (userRole === 'seeker') {
       // Ambil field yang BOLEH diupdate seeker dari req.body
-      const { bio, skills, resume_url, expected_salary, disability_info } = req.body;
-      profileFields = { bio, skills, resume_url, expected_salary, disability_info };
+      const { bio, skills, resume_filename, expected_salary, disability_info } = req.body;
+      profileFields = { bio, skills, resume_filename, expected_salary, disability_info };
 
       // Query UPSERT: Jika profil sudah ada, UPDATE. Jika belum, INSERT.
       // ON CONFLICT(user_id) DO UPDATE ...
       queryText = `
-        INSERT INTO user_profiles (user_id, bio, skills, resume_url, expected_salary, disability_info)
+        INSERT INTO user_profiles (user_id, bio, skills, resume_filename, expected_salary, disability_info)
         VALUES ($1, $2, $3, $4, $5, $6)
         ON CONFLICT (user_id) 
         DO UPDATE SET 
           bio = EXCLUDED.bio, 
           skills = EXCLUDED.skills, 
-          resume_url = EXCLUDED.resume_url, 
+          resume_filename = EXCLUDED.resume_filename, 
           expected_salary = EXCLUDED.expected_salary, 
           disability_info = EXCLUDED.disability_info
         RETURNING *; 
       `;
-      values = [userId, bio, skills, resume_url, expected_salary, disability_info];
+      values = [userId, bio, skills, resume_filename, expected_salary, disability_info];
 
     } else if (userRole === 'recruiter') {
       // Ambil field yang BOLEH diupdate recruiter
@@ -500,7 +609,7 @@ app.get('/api/applications/recruiter/:jobId', authMiddleware, async (req, res) =
       SELECT 
         a.id AS application_id, a.status, a.applied_at, a.cover_letter,
         u.id AS seeker_id, u.full_name AS seeker_name, u.email AS seeker_email,
-        p.skills, p.resume_url, p.expected_salary, p.disability_info
+        p.skills, p.resume_filename, p.expected_salary, p.disability_info, p.bio
       FROM job_applications a
       JOIN users u ON a.seeker_id = u.id
       LEFT JOIN user_profiles p ON u.id = p.user_id
@@ -696,6 +805,49 @@ app.post('/api/jobs/:jobId/apply', authMiddleware, async (req, res) => {
     res.status(500).json({ error: "Gagal memproses lamaran" });
   }
 });
+
+// --- Rute BARU untuk Mengakses/Download Resume ---
+// --- Rute Untuk Mengakses/Download Resume (Tanpa Auth Middleware) ---
+app.get('/api/resumes/:filename', (req, res) => {
+  try {
+    const filename = req.params.filename;
+
+    // Validasi sederhana untuk mencegah path traversal (../)
+    if (filename.includes('..')) {
+      return res.status(400).send('Nama file tidak valid.');
+    }
+
+    // Buat path absolut ke file di folder uploads/resumes
+    const filePath = path.join(__dirname, 'uploads', 'resumes', filename);
+
+    // Cek apakah file benar-benar ada sebelum mengirim
+    fs.access(filePath, fs.constants.R_OK, (err) => {
+      if (err) {
+        // Jika error (termasuk file tidak ada atau tidak bisa dibaca)
+        console.error("Error accessing file:", err);
+        return res.status(404).send('File tidak ditemukan atau tidak bisa diakses.');
+      }
+
+      // Kirim file sebagai response
+      // res.sendFile akan otomatis mengatur Content-Type berdasarkan ekstensi file
+      res.sendFile(filePath, (sendFileErr) => {
+        if (sendFileErr) {
+          console.error("Error sending file:", sendFileErr);
+          // Hindari mengirim error detail ke klien
+          res.status(500).send('Gagal mengirim file.');
+        } else {
+          console.log(`File sent: ${filename}`);
+        }
+      });
+    });
+
+  } catch (error) {
+      // Menangkap error tak terduga lainnya
+      console.error("Unexpected error in /api/resumes route:", error);
+      res.status(500).send('Terjadi kesalahan pada server.');
+  }
+});
+// --- AKHIR Rute Resume ---
 
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
