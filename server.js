@@ -7,7 +7,16 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
 const app = express();
-const port = parseInt(process.env.PORT, 10) || 3001;
+// --- PORT CONFIGURATION ---
+const rawPort = process.env.PORT; // Ambil port mentah (string)
+console.log(`Raw process.env.PORT: ${rawPort} (Type: ${typeof rawPort})`); // Log 1
+
+const parsedPort = parseInt(rawPort, 10); // Coba parse
+console.log(`Parsed port: ${parsedPort} (Type: ${typeof parsedPort})`); // Log 2
+
+const port = parsedPort || 3001; // Fallback ke 3001 jika NaN
+console.log(`Final port value: ${port} (Type: ${typeof port})`); // Log 3
+// ----------------------------
 
 // middleware
 app.use(express.json());
@@ -688,7 +697,7 @@ app.post('/api/jobs/:jobId/apply', authMiddleware, async (req, res) => {
   }
 });
 
-app.listen(port, '0.0.0.0', () => { 
-  console.log(`Server running on port ${port}`); // More generic message
+app.listen(port, () => {
+  console.log(`Server running on port ${port}`);
 });
 
