@@ -30,7 +30,7 @@ const pool = new Pool({
     user: 'postgres',
     host: 'ballast.proxy.rlwy.net',
     database: 'railway',
-    password: 'aHGpxsvjvmDpuWqxwHleIuAojuzirycuH',
+    password: 'HGpxsvjvmDpuWqxwHleIuAojuzirycuH',
     port: 48994,
 });
 
