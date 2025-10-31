@@ -26,6 +26,14 @@ console.log(`Final port value: ${port} (Type: ${typeof port})`); // Log 3
 app.use(express.json());
 app.use(cors());
 
+// const pool = new Pool({
+//     user: 'db_admin',
+//     host: 'localhost',
+//     database: 'university_db',
+//     password: 'admin123',
+//     port: 5432,
+// });
+
 const pool = new Pool({
     user: 'postgres',
     host: 'ballast.proxy.rlwy.net',
@@ -94,8 +102,7 @@ const uploadResume = multer({
 
 // --- AKHIR MIDDLEWARE ---
 
-// --- MODIFIKASI Rute PUT /api/profile ---
-// Tambahkan 'uploadResume' sebagai middleware KEDUA (setelah authMiddleware)
+// MODIFIKASI Rute PUT /api/profile (Sekarang digabung)
 app.put('/api/profile', authMiddleware, uploadResume, async (req, res) => {
   try {
     const userId = req.user.id;
@@ -104,62 +111,56 @@ app.put('/api/profile', authMiddleware, uploadResume, async (req, res) => {
     let queryText;
     let values;
 
+    // --- LOGIKA PEMISAH PERAN ---
     if (userRole === 'seeker') {
-      // req.body sekarang berisi field teks dari FormData
+      // Ini adalah logika untuk Seeker (dengan file upload)
       const { bio, skills: skillsString, expected_salary, disability_info } = req.body;
-
-      // req.file berisi info file yang diupload (jika ada) dari multer
       const resume_filename = req.file ? req.file.filename : null;
 
-      // --- PERUBAHAN DI SINI ---
-      // Ubah string skills (yang dipisah koma) menjadi array JavaScript
-      // Tangani juga jika stringnya kosong atau tidak ada
       const skillsArray = skillsString ? skillsString.split(',').map(s => s.trim()).filter(s => s) : [];
-      // --------------------------
 
-      // --- Query UPSERT Diupdate ---
-      // Kita HANYA update resume_filename jika file baru diupload
-      // COALESCE(kolom_baru, kolom_lama) akan memakai nilai baru jika tidak null, jika null pakai nilai lama
       queryText = `
         INSERT INTO user_profiles (user_id, bio, skills, expected_salary, disability_info, resume_filename)
         VALUES ($1, $2, $3, $4, $5, $6)
         ON CONFLICT (user_id)
         DO UPDATE SET
           bio = EXCLUDED.bio,
-          skills = EXCLUDED.skills,
+          skills = $3,
           expected_salary = EXCLUDED.expected_salary,
           disability_info = EXCLUDED.disability_info,
-          resume_filename = COALESCE($6, user_profiles.resume_filename) -- Update hanya jika $6 (filename baru) tidak NULL
+          resume_filename = COALESCE($6, user_profiles.resume_filename)
         RETURNING *;
       `;
-      // --- PERUBAHAN DI SINI ---
-      // Gunakan 'skillsArray' (array JS) di posisi $3
       values = [userId, bio, skillsArray, expected_salary, disability_info, resume_filename];
-      // --------------------------
 
     } else if (userRole === 'recruiter') {
-      // --- Logika untuk Recruiter (TETAP SAMA, tidak ada upload file di sini) ---
+      // Ini adalah logika untuk Recruiter (tanpa file upload)
+      // 'uploadResume' tetap berjalan, tapi kita abaikan req.file
       const { company_name, company_description, company_website } = req.body;
+      
       queryText = `
         INSERT INTO company_profiles (recruiter_user_id, company_name, company_description, company_website)
         VALUES ($1, $2, $3, $4)
         ON CONFLICT (recruiter_user_id)
-        DO UPDATE SET /* ... update fields ... */
+        DO UPDATE SET
+          company_name = EXCLUDED.company_name,
+          company_description = EXCLUDED.company_description,
+          company_website = EXCLUDED.company_website
         RETURNING *;
       `;
       values = [userId, company_name, company_description, company_website];
-      // -------------------------------------------------------------------
+
     } else {
       return res.status(403).json({ error: "Admin tidak bisa mengupdate profil." });
     }
+    // --- AKHIR LOGIKA PEMISAH PERAN ---
 
     const result = await pool.query(queryText, values);
     res.json(result.rows[0]);
 
   } catch (err) {
-    console.error("Error updating profile:", err.message); // Log error lebih detail
-    // Hapus file yang mungkin terupload jika query DB gagal
-    if (req.file) {
+    console.error("Error updating profile:", err.message);
+    if (req.file) { // Hapus file jika query gagal
        const fs = require('fs');
        fs.unlink(req.file.path, (unlinkErr) => {
           if (unlinkErr) console.error("Error deleting uploaded file after DB error:", unlinkErr);
@@ -419,69 +420,6 @@ app.get('/api/profile', authMiddleware, async (req, res) => {
   }
 });
 
-
-// 2. RUTE: Mengupdate Profil Milik User yang Login
-app.put('/api/profile', authMiddleware, async (req, res) => {
-  try {
-    const userId = req.user.id;
-    const userRole = req.user.role;
-
-    let queryText;
-    let values;
-    let profileFields;
-
-    if (userRole === 'seeker') {
-      // Ambil field yang BOLEH diupdate seeker dari req.body
-      const { bio, skills, resume_filename, expected_salary, disability_info } = req.body;
-      profileFields = { bio, skills, resume_filename, expected_salary, disability_info };
-
-      // Query UPSERT: Jika profil sudah ada, UPDATE. Jika belum, INSERT.
-      // ON CONFLICT(user_id) DO UPDATE ...
-      queryText = `
-        INSERT INTO user_profiles (user_id, bio, skills, resume_filename, expected_salary, disability_info)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        ON CONFLICT (user_id) 
-        DO UPDATE SET 
-          bio = EXCLUDED.bio, 
-          skills = EXCLUDED.skills, 
-          resume_filename = EXCLUDED.resume_filename, 
-          expected_salary = EXCLUDED.expected_salary, 
-          disability_info = EXCLUDED.disability_info
-        RETURNING *; 
-      `;
-      values = [userId, bio, skills, resume_filename, expected_salary, disability_info];
-
-    } else if (userRole === 'recruiter') {
-      // Ambil field yang BOLEH diupdate recruiter
-      const { company_name, company_description, company_website } = req.body;
-       profileFields = { company_name, company_description, company_website };
-
-      // Query UPSERT untuk company_profiles
-       queryText = `
-        INSERT INTO company_profiles (recruiter_user_id, company_name, company_description, company_website)
-        VALUES ($1, $2, $3, $4)
-        ON CONFLICT (recruiter_user_id) 
-        DO UPDATE SET 
-          company_name = EXCLUDED.company_name, 
-          company_description = EXCLUDED.company_description, 
-          company_website = EXCLUDED.company_website
-        RETURNING *;
-      `;
-       values = [userId, company_name, company_description, company_website];
-
-    } else {
-      return res.status(403).json({ error: "Admin tidak bisa mengupdate profil di endpoint ini" });
-    }
-
-    // Jalankan query
-    const result = await pool.query(queryText, values);
-    res.json(result.rows[0]); // Kirim profil yang sudah terupdate/terbuat
-
-  } catch (err) {
-    console.error(err.message);
-    res.status(500).json({ error: "Gagal mengupdate profil" });
-  }
-});
 
 // --- MODUL LOWONGAN PEKERJAAN ---
 
